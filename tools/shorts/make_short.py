@@ -272,6 +272,80 @@ SCENES = {"hook": scene_hook, "speed": scene_speed, "force": scene_force,
           "bubble": scene_bubble, "glass": scene_glass, "next": scene_next}
 
 
+# ---------- 写真ショット（フリー素材） ----------
+MID_W, MID_H = W, MID_Y1 - MID_Y0
+_photo_cache = {}
+
+
+def load_photo(proj, name):
+    if name not in _photo_cache:
+        _photo_cache[name] = Image.open(proj / "assets" / f"{name}.jpg").convert("RGB")
+    return _photo_cache[name]
+
+
+def render_shot(img, shot, p):
+    """ゆっくりズーム＋パン（ケン・バーンズ）。p は 0→1 の進み具合"""
+    iw, ih = img.size
+    aspect = MID_W / MID_H
+    bw, bh = (iw, iw / aspect) if iw / ih < aspect else (ih * aspect, ih)
+    z0, z1 = shot.get("zoom", [1.05, 1.18])
+    z = z0 + (z1 - z0) * p
+    cw, ch = bw / z, bh / z
+    fx, fy = shot.get("focus", [0.5, 0.5])
+    dx, dy = shot.get("pan", [0, 0])
+    cx = (fx + dx * (p - 0.5)) * iw
+    cy = (fy + dy * (p - 0.5)) * ih
+    cw, ch = min(cw, iw), min(ch, ih)
+    x0 = max(0.0, min(cx - cw / 2, iw - cw))
+    y0 = max(0.0, min(cy - ch / 2, ih - ch))
+    return img.resize((MID_W, MID_H), Image.BILINEAR, box=(x0, y0, x0 + cw, y0 + ch)), (x0, y0, cw, ch)
+
+
+def img_to_screen(pt, crop):
+    x0, y0, cw, ch = crop
+    return ((pt[0] - x0) / cw * MID_W, (pt[1] - y0) / ch * MID_H)
+
+
+def scribble_circle(d, center, r, prog, seed=1, color=(255, 30, 30), width=9):
+    """手描きっぽいゆがんだ丸を、ペンで描くように少しずつ描く"""
+    rr = random.Random(seed)
+    k1, k2 = rr.uniform(0.04, 0.09), rr.uniform(0.03, 0.07)
+    ph1, ph2 = rr.uniform(0, 6), rr.uniform(0, 6)
+    n = int(60 * min(1, prog))
+    a0 = rr.uniform(0, 6.28)
+    pts = []
+    for i in range(n + 1):
+        a = a0 + i / 60 * 2 * math.pi * 1.12
+        rad = r * (1 + k1 * math.sin(3 * a + ph1) + k2 * math.sin(5 * a + ph2))
+        pts.append((center[0] + rad * 1.15 * math.cos(a), center[1] + rad * math.sin(a)))
+    if len(pts) > 1:
+        d.line(pts, fill=color, width=width, joint="curve")
+
+
+def tilted_label(mid, text, color, st, angle, pos):
+    """少し傾けたテロップを、ポンと出す"""
+    pop = 1 + 0.35 * max(0, 1 - st / 0.12)
+    f = font(FONT_LABEL, int(96 * pop))
+    tmp = Image.new("RGBA", (1100, 260), (0, 0, 0, 0))
+    td = ImageDraw.Draw(tmp)
+    td.text((550, 130), text, font=f, fill=color, anchor="mm", stroke_width=10, stroke_fill=BLACK)
+    tmp = tmp.rotate(angle, resample=Image.BICUBIC, expand=False)
+    mid.paste(tmp, (int(pos[0] - 550), int(pos[1] - 130)), tmp)
+
+
+def draw_credit(d, text):
+    f = font(FONT_SUB, 22)
+    d.text((MID_W - 14, MID_H - 12), text, font=f, fill=(235, 235, 235), anchor="rd",
+           stroke_width=2, stroke_fill=BLACK)
+
+
+def credit_short(c):
+    if c["license"] == "CC0":
+        return "写真: iNaturalist (CC0)"
+    who = c["attribution"].replace("(c) ", "").split(",")[0]
+    return f"写真: {who} / iNaturalist ({c['license']})"
+
+
 # ---------- タイミングと音声 ----------
 def build_timeline(script, voice_dir):
     items, t, idx = [], 0.0, 0
@@ -288,7 +362,8 @@ def build_timeline(script, voice_dir):
             else:
                 dur = SEC_PER_CHAR * len(ln["yomi"]) + 0.3
                 wav = None
-            items.append({"scene": si, "text": ln["text"], "start": t, "end": t + dur + LINE_PAD, "wav": wav})
+            items.append({"scene": si, "text": ln["text"], "start": t, "end": t + dur + LINE_PAD, "wav": wav,
+                          "line": ln})
             t += dur + LINE_PAD
         sc["_start"], sc["_end"] = s_start, t
     return items, t + TAIL, have_voice
@@ -330,7 +405,22 @@ def main(proj):
     # VOICEVOX 用のテキスト（1行＝1音声。テキスト読み込みでそのまま使える）
     yomi = [ln["yomi"] for sc in script["scenes"] for ln in sc["lines"]]
     (out / "voicevox_import.txt").write_text("\n".join(yomi) + "\n", encoding="utf-8")
-    (out / "description.txt").write_text(script["title"] + "\n\n" + script.get("description", "") + "\n", encoding="utf-8")
+    credits = {}
+    cpath = proj / "assets" / "credits.json"
+    if cpath.exists():
+        credits = json.loads(cpath.read_text(encoding="utf-8"))
+    used = []
+    for sc in script["scenes"]:
+        for ln in sc["lines"]:
+            n = ln.get("shot", {}).get("img")
+            if n and n not in used:
+                used.append(n)
+    cred_txt = ""
+    if used:
+        cred_txt = "\n\n写真クレジット（iNaturalist）\n" + "\n".join(
+            f"・{credits[n]['attribution']} {credits[n]['source']}" for n in used if n in credits)
+    (out / "description.txt").write_text(script["title"] + "\n\n" + script.get("description", "") + cred_txt + "\n",
+                                         encoding="utf-8")
 
     base = build_base(script)
     mid_bg = build_mid_bg()
@@ -362,15 +452,37 @@ def main(proj):
         it = items[cur]
         sc = script["scenes"][it["scene"]]
         frame = base.copy()
-        mid = mid_bg.copy()
-        d = ImageDraw.Draw(mid)
         st = t - sc["_start"]
-        draw_bubbles(d, t)
-        SCENES[sc["visual"]](d, st, sc["_end"] - sc["_start"], sc, script)
-        lab = sc.get("label")
-        if lab:
-            pop = 1 + 0.25 * max(0, 1 - st / 0.2)
-            outlined(d, (W // 2, 80), lab["text"], font(FONT_LABEL, int(100 * pop)), COLORS[lab["color"]], 9)
+        shot = it["line"].get("shot")
+        if shot:
+            lt = t - it["start"]
+            prog = lt / max(0.1, it["end"] - it["start"])
+            img = load_photo(proj, shot["img"])
+            mid, crop = render_shot(img, shot, prog)
+            d = ImageDraw.Draw(mid)
+            if shot.get("flash") and lt < 0.12:
+                mid = Image.blend(mid, Image.new("RGB", mid.size, WHITE), 1 - lt / 0.12)
+                d = ImageDraw.Draw(mid)
+            if "circle" in shot and lt > 0.35:
+                cx, cy, cr = shot["circle"]
+                iw, ih = img.size
+                center = img_to_screen((cx * iw, cy * ih), crop)
+                scribble_circle(d, center, cr * MID_W, (lt - 0.35) / 0.45, seed=len(it["text"]))
+            if shot["img"] in credits:
+                draw_credit(d, credit_short(credits[shot["img"]]))
+            lab = it["line"].get("label")
+            if lab:
+                tilted_label(mid, lab["text"], COLORS[lab["color"]], lt, lab.get("angle", 4),
+                             lab.get("pos", [W // 2, 95]))
+        else:
+            mid = mid_bg.copy()
+            d = ImageDraw.Draw(mid)
+            draw_bubbles(d, t)
+            SCENES[sc["visual"]](d, st, sc["_end"] - sc["_start"], sc, script)
+            lab = sc.get("label")
+            if lab:
+                pop = 1 + 0.25 * max(0, 1 - st / 0.2)
+                outlined(d, (W // 2, 80), lab["text"], font(FONT_LABEL, int(100 * pop)), COLORS[lab["color"]], 9)
         frame.paste(mid, (0, MID_Y0))
         fd = ImageDraw.Draw(frame)
         if it["text"] not in sub_cache:

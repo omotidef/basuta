@@ -1,0 +1,83 @@
+{
+ "hook": {
+  "license": "CC BY",
+  "attribution": "(c) Kai Squires, some rights reserved (CC BY)",
+  "source": "https://www.inaturalist.org/photos/60094698",
+  "size": [
+   1800,
+   1348
+  ]
+ },
+ "front": {
+  "license": "CC BY",
+  "attribution": "(c) Pauline Walsh Jacobson, some rights reserved (CC BY)",
+  "source": "https://www.inaturalist.org/photos/350491966",
+  "size": [
+   960,
+   720
+  ]
+ },
+ "side": {
+  "license": "CC BY",
+  "attribution": "(c) Dan Schofield, some rights reserved (CC BY)",
+  "source": "https://www.inaturalist.org/photos/42892676",
+  "size": [
+   1800,
+   1350
+  ]
+ },
+ "burrow1": {
+  "license": "CC BY",
+  "attribution": "(c) Bernard Picton, some rights reserved (CC BY)",
+  "source": "https://www.inaturalist.org/photos/755991989",
+  "size": [
+   1800,
+   1201
+  ]
+ },
+ "close": {
+  "license": "CC BY",
+  "attribution": "(c) Alicia Christman, some rights reserved (CC BY)",
+  "source": "https://www.inaturalist.org/photos/724726934",
+  "size": [
+   1800,
+   1352
+  ]
+ },
+ "face1": {
+  "license": "CC0",
+  "attribution": "no rights reserved",
+  "source": "https://www.inaturalist.org/photos/451267494",
+  "size": [
+   1800,
+   1350
+  ]
+ },
+ "face2": {
+  "license": "CC0",
+  "attribution": "no rights reserved",
+  "source": "https://www.inaturalist.org/photos/451267482",
+  "size": [
+   1800,
+   1350
+  ]
+ },
+ "burrow2": {
+  "license": "CC BY",
+  "attribution": "(c) portioid, some rights reserved (CC BY)",
+  "source": "https://www.inaturalist.org/photos/347316158",
+  "size": [
+   1800,
+   1646
+  ]
+ },
+ "pistol": {
+  "license": "CC BY",
+  "attribution": "(c) Julien Renoult, some rights reserved (CC BY)",
+  "source": "https://www.inaturalist.org/photos/23624277",
+  "size": [
+   1800,
+   1350
+  ]
+ }
+}
