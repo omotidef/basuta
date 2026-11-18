@@ -35,12 +35,15 @@
               1.3,
               1.05
             ],
-            "flash": true,
             "circle": [
               0.6,
               0.56,
               0.13
-            ]
+            ],
+            "punch": true,
+            "clip": "punch.mp4",
+            "clip_speed": 1.0,
+            "circle_at": 1.0
           }
         },
         {
@@ -119,7 +122,8 @@
             "pan": [
               0.06,
               0
-            ]
+            ],
+            "overlay": "speed_chart"
           }
         },
         {
@@ -182,7 +186,8 @@
             "pan": [
               0,
               -0.04
-            ]
+            ],
+            "overlay": "shell_crack"
           }
         }
       ]
@@ -221,7 +226,8 @@
             "pan": [
               0.05,
               0
-            ]
+            ],
+            "overlay": "bubble_steps"
           }
         },
         {
@@ -261,7 +267,8 @@
             "zoom": [
               1.3,
               1.1
-            ]
+            ],
+            "overlay": "two_peaks"
           }
         }
       ]
@@ -286,7 +293,8 @@
             "zoom": [
               1.0,
               1.15
-            ]
+            ],
+            "overlay": "glass_crack"
           }
         }
       ]

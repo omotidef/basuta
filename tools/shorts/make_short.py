@@ -346,6 +346,178 @@ def credit_short(c):
     return f"写真: {who} / iNaturalist ({c['license']})"
 
 
+
+# ---------- 写真に重ねる図解パネル ----------
+def panel(ov, box, alpha=170):
+    d = ImageDraw.Draw(ov)
+    d.rounded_rectangle(box, 24, fill=(0, 0, 0, alpha), outline=(255, 255, 255, 230), width=4)
+    return d
+
+
+def ov_speed_chart(ov, lt, dur):
+    """棒グラフ：シャコのパンチ vs 一般道の車"""
+    d = panel(ov, (40, 150, 1040, 560))
+    p = ease(lt / 0.9)
+    f = font(FONT_LABEL, 44)
+    rows = [("シャコのパンチ", 83, (235, 30, 30), "時速80km超"), ("一般道の車", 60, (200, 200, 200), "時速60km")]
+    for i, (name, v, col, val) in enumerate(rows):
+        y = 245 + i * 150
+        d.text((80, y - 40), name, font=f, fill=WHITE, anchor="lm", stroke_width=4, stroke_fill=BLACK)
+        w = int(640 * v / 90 * p)
+        d.rounded_rectangle((80, y, 80 + max(w, 12), y + 70), 14, fill=col + (255,), outline=WHITE, width=3)
+        if p > 0.7:
+            d.text((100 + w, y + 35), val, font=font(FONT_LABEL, 46), fill=YELLOW, anchor="lm",
+                   stroke_width=6, stroke_fill=BLACK)
+    d.text((540, 525), "パンチの速さ：秒速 約23m", font=font(FONT_SUB, 34), fill=WHITE, anchor="mm")
+
+
+def ov_shell_crack(ov, lt, dur):
+    """貝殻が割れる図"""
+    d = panel(ov, (620, 170, 1040, 560))
+    cx, cy = 830, 380
+    broken = lt > 0.9
+    off = 34 * ease((lt - 0.9) / 0.3) if broken else 0
+    shell = (240, 220, 190, 255)
+    if not broken:
+        d.chord((cx - 130, cy - 110, cx + 130, cy + 130), 180, 360, fill=shell, outline=WHITE, width=5)
+        for k in range(-2, 3):
+            d.line([(cx + k * 42, cy + 10), (cx + k * 18, cy - 100)], fill=(190, 150, 110, 255), width=4)
+        # 近づく腕
+        ax = 640 + 120 * ease(lt / 0.9)
+        d.rounded_rectangle((620, cy - 18, ax, cy + 18), 10, fill=(255, 120, 50, 255))
+    else:
+        d.chord((cx - 130 - off, cy - 110, cx + 130 - off, cy + 130), 180, 270, fill=shell, outline=WHITE, width=5)
+        d.chord((cx - 130 + off, cy - 110, cx + 130 + off, cy + 130), 270, 360, fill=shell, outline=WHITE, width=5)
+        d.text((cx, cy + 120), "パキッ！", font=font(FONT_LABEL, 60), fill=YELLOW, anchor="mm",
+               stroke_width=7, stroke_fill=BLACK)
+
+
+def ov_bubble_steps(ov, lt, dur):
+    """泡で2発目が入るしくみ（3ステップ）"""
+    d = panel(ov, (40, 160, 1040, 600))
+    q = lt / max(dur, 0.1)
+    ty = 400
+    tx = 860
+    d.ellipse((tx - 60, ty - 45, tx + 60, ty + 45), fill=(240, 220, 190, 255), outline=WHITE, width=4)
+    d.text((tx, ty + 75), "貝", font=font(FONT_SUB, 36), fill=WHITE, anchor="mm")
+    reach = ease(q / 0.25)
+    hx = 120 + (tx - 230 - 120) * reach
+    d.rounded_rectangle((80, ty - 20, hx, ty + 20), 10, fill=(255, 140, 60, 255), outline=WHITE, width=3)
+    d.ellipse((hx - 35, ty - 48, hx + 55, ty + 48), fill=(255, 110, 40, 255), outline=WHITE, width=4)
+    steps = [("1 腕がぶつかる", 0.0), ("2 泡ができる", 0.3), ("3 泡がつぶれて衝撃！", 0.62)]
+    for i, (txt, t0) in enumerate(steps):
+        if q >= t0:
+            current = i == 2 or q < steps[i + 1][1]
+            col = YELLOW if current else (180, 180, 180)
+            d.text((540 if i == 2 else 80 + i * 330, 215 if i < 2 else 555), txt, font=font(FONT_LABEL, 42),
+                   fill=col, anchor="mm" if i == 2 else "lm", stroke_width=5, stroke_fill=BLACK)
+    if q > 0.3:
+        g = ease((q - 0.3) / 0.25)
+        collapse = ease((q - 0.62) / 0.12) if q > 0.62 else 0
+        r = 70 * g * (1 - collapse)
+        bx = hx + 110
+        if r > 2:
+            d.ellipse((bx - r, ty - r, bx + r, ty + r), outline=(200, 240, 255, 255), width=6)
+        if collapse > 0.5:
+            for i in range(12):
+                a = i * math.pi / 6
+                d.line([(bx + 18 * math.cos(a), ty + 18 * math.sin(a)), (bx + 120 * math.cos(a), ty + 120 * math.sin(a))],
+                       fill=YELLOW + (255,), width=6)
+
+
+def ov_two_peaks(ov, lt, dur):
+    """力のグラフ：1回のパンチで山が2つ（イメージ図）"""
+    d = panel(ov, (60, 170, 1020, 590))
+    x0, y0, x1, y1 = 130, 520, 960, 230
+    d.line([(x0, y0), (x1, y0)], fill=WHITE + (255,), width=4)
+    d.line([(x0, y0), (x0, y1)], fill=WHITE + (255,), width=4)
+    d.text((x1, y0 + 30), "時間", font=font(FONT_SUB, 30), fill=WHITE, anchor="rm")
+    d.text((x0 + 10, y1 - 10), "衝撃の強さ", font=font(FONT_SUB, 30), fill=WHITE, anchor="lm")
+    p = ease(lt / 1.4)
+    pts = []
+    n = int(200 * p)
+    for i in range(n + 1):
+        u = i / 200
+        v = 0.95 * math.exp(-((u - 0.3) / 0.045) ** 2) + 0.7 * math.exp(-((u - 0.62) / 0.03) ** 2)
+        pts.append((x0 + u * (x1 - x0), y0 - v * (y0 - y1 - 20)))
+    if len(pts) > 1:
+        d.line(pts, fill=(255, 60, 60, 255), width=7, joint="curve")
+    if p > 0.45:
+        d.text((x0 + 0.3 * (x1 - x0) + 40, y1 + 25), "1発目（腕）", font=font(FONT_LABEL, 36), fill=YELLOW, anchor="lm",
+               stroke_width=5, stroke_fill=BLACK)
+    if p > 0.8:
+        d.text((x0 + 0.62 * (x1 - x0) + 40, y1 + 60), "2発目（泡）", font=font(FONT_LABEL, 36), fill=YELLOW,
+               anchor="lm", stroke_width=5, stroke_fill=BLACK)
+    d.text((1000, 575), "※イメージ図", font=font(FONT_SUB, 24), fill=(220, 220, 220), anchor="rm")
+
+
+def ov_glass_crack(ov, lt, dur):
+    """画面全体にガラスのヒビ"""
+    d = ImageDraw.Draw(ov)
+    p = ease((lt - 0.3) / 0.6)
+    cx, cy = 690, 330
+    rr = random.Random(5)
+    for i in range(14):
+        a = i * 2 * math.pi / 14 + rr.uniform(-0.15, 0.15)
+        ln = rr.uniform(260, 620) * p
+        pts = [(cx, cy)]
+        for k in range(1, 5):
+            r = ln * k / 4
+            pts.append((cx + r * math.cos(a) + rr.uniform(-14, 14), cy + r * math.sin(a) + rr.uniform(-14, 14)))
+        d.line(pts, fill=(255, 255, 255, 230), width=4)
+    if p > 0.5:
+        for r in (70, 150):
+            d.ellipse((cx - r, cy - r * 0.8, cx + r, cy + r * 0.8), outline=(255, 255, 255, 160), width=3)
+
+
+OVERLAYS = {"speed_chart": ov_speed_chart, "shell_crack": ov_shell_crack, "bubble_steps": ov_bubble_steps,
+            "two_peaks": ov_two_peaks, "glass_crack": ov_glass_crack}
+
+
+# ---------- 冒頭のパンチ（動画素材 or 写真での再現） ----------
+_clip_cache = {}
+
+
+def load_clip(proj, name):
+    """assets/<name> の動画を中段サイズ（1080x652）のフレーム列にする"""
+    if name not in _clip_cache:
+        cmd = ["ffmpeg", "-v", "error", "-i", str(proj / "assets" / name), "-vf",
+               f"scale={MID_W}:{MID_H}:force_original_aspect_ratio=increase,crop={MID_W}:{MID_H},fps={FPS}",
+               "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+        raw = subprocess.run(cmd, check=True, capture_output=True).stdout
+        n = len(raw) // (MID_W * MID_H * 3)
+        size = MID_W * MID_H * 3
+        _clip_cache[name] = [Image.frombytes("RGB", (MID_W, MID_H), raw[i * size:(i + 1) * size]) for i in range(n)]
+    return _clip_cache[name]
+
+
+def punch_fx(mid, lt, center):
+    """写真でパンチの瞬間を再現：急ズーム→揺れ→フラッシュ→衝撃線→「ドンッ」"""
+    d = ImageDraw.Draw(mid, "RGBA")
+    hit = 0.32
+    if lt < hit:  # 溜め：スピード線が中心に集まる
+        k = lt / hit
+        for i in range(28):
+            a = i * 2 * math.pi / 28
+            r0 = 700 - 380 * k
+            d.line([(center[0] + r0 * math.cos(a), center[1] + r0 * math.sin(a)),
+                    (center[0] + (r0 + 260) * math.cos(a), center[1] + (r0 + 260) * math.sin(a))],
+                   fill=(255, 255, 255, 170), width=5)
+        return mid
+    u = lt - hit
+    if u < 0.1:
+        mid = Image.blend(mid, Image.new("RGB", mid.size, WHITE), 1 - u / 0.1)
+        d = ImageDraw.Draw(mid, "RGBA")
+    if u < 0.9:
+        for i in range(18):
+            a = i * 2 * math.pi / 18 + 0.1
+            r0, r1 = 90 + 400 * ease(u / 0.25), 200 + 560 * ease(u / 0.25)
+            d.line([(center[0] + r0 * math.cos(a), center[1] + r0 * math.sin(a)),
+                    (center[0] + r1 * math.cos(a), center[1] + r1 * math.sin(a))], fill=(255, 230, 0, 230), width=9)
+    if u < 2.2:
+        tilted_label(mid, "ドンッ！", YELLOW, u, -8, (center[0] + 230, center[1] - 120))
+    return mid
+
 # ---------- タイミングと音声 ----------
 def build_timeline(script, voice_dir):
     items, t, idx = [], 0.0, 0
@@ -458,16 +630,40 @@ def main(proj):
             lt = t - it["start"]
             prog = lt / max(0.1, it["end"] - it["start"])
             img = load_photo(proj, shot["img"])
-            mid, crop = render_shot(img, shot, prog)
+            clip = shot.get("clip")
+            if clip and (proj / "assets" / clip).exists():
+                frames = load_clip(proj, clip)
+                k = int(lt * FPS * shot.get("clip_speed", 1.0))
+                mid = frames[min(k, len(frames) - 1)].copy()
+                crop = (0, 0, img.size[0], img.size[1])
+                shot = {k2: v for k2, v in shot.items() if k2 not in ("circle", "punch")}
+            else:
+                sp = dict(shot)
+                if shot.get("punch") and lt < 0.45:  # 急ズーム＋揺れ
+                    z = 1.0 + 0.9 * ease(lt / 0.32)
+                    sp["zoom"] = [z, z]
+                    sp["focus"] = shot.get("circle", shot.get("focus", [0.5, 0.5]))[:2]
+                mid, crop = render_shot(img, sp, prog)
+                if shot.get("punch") and 0.32 <= lt < 0.8:
+                    amp = 26 * (1 - (lt - 0.32) / 0.48)
+                    mid = mid.transform(mid.size, Image.AFFINE,
+                                        (1, 0, amp * math.sin(lt * 90), 0, 1, amp * math.cos(lt * 70)))
+                if shot.get("punch"):
+                    mid = punch_fx(mid, lt, (MID_W * 0.5, MID_H * 0.5))
             d = ImageDraw.Draw(mid)
+            if shot.get("overlay"):
+                ov = Image.new("RGBA", mid.size, (0, 0, 0, 0))
+                OVERLAYS[shot["overlay"]](ov, lt, it["end"] - it["start"])
+                mid = Image.alpha_composite(mid.convert("RGBA"), ov).convert("RGB")
+                d = ImageDraw.Draw(mid)
             if shot.get("flash") and lt < 0.12:
                 mid = Image.blend(mid, Image.new("RGB", mid.size, WHITE), 1 - lt / 0.12)
                 d = ImageDraw.Draw(mid)
-            if "circle" in shot and lt > 0.35:
+            if "circle" in shot and lt > shot.get("circle_at", 0.35):
                 cx, cy, cr = shot["circle"]
                 iw, ih = img.size
                 center = img_to_screen((cx * iw, cy * ih), crop)
-                scribble_circle(d, center, cr * MID_W, (lt - 0.35) / 0.45, seed=len(it["text"]))
+                scribble_circle(d, center, cr * MID_W, (lt - shot.get("circle_at", 0.35)) / 0.45, seed=len(it["text"]))
             if shot["img"] in credits:
                 draw_credit(d, credit_short(credits[shot["img"]]))
             lab = it["line"].get("label")
