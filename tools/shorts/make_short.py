@@ -340,6 +340,8 @@ def draw_credit(d, text):
 
 
 def credit_short(c):
+    if c.get("short"):
+        return c["short"]
     if c["license"] == "CC0":
         return "写真: iNaturalist (CC0)"
     who = c["attribution"].replace("(c) ", "").split(",")[0]
@@ -491,10 +493,11 @@ def load_clip(proj, name):
     return _clip_cache[name]
 
 
-def punch_fx(mid, lt, center):
-    """写真でパンチの瞬間を再現：急ズーム→揺れ→フラッシュ→衝撃線→「ドンッ」"""
+def punch_fx(mid, lt, center, hit=0.32, pre=True):
+    """パンチの瞬間の演出：（溜めのスピード線）→フラッシュ→衝撃線→「ドンッ」。hit は当たる時刻"""
     d = ImageDraw.Draw(mid, "RGBA")
-    hit = 0.32
+    if lt < hit and not pre:
+        return mid
     if lt < hit:  # 溜め：スピード線が中心に集まる
         k = lt / hit
         for i in range(28):
@@ -584,12 +587,14 @@ def main(proj):
     used = []
     for sc in script["scenes"]:
         for ln in sc["lines"]:
-            n = ln.get("shot", {}).get("img")
-            if n and n not in used:
-                used.append(n)
+            sh = ln.get("shot", {})
+            for n in (sh.get("clip"), sh.get("img")):
+                if n and n in credits and n not in used and (n != sh.get("img") or not sh.get("clip")
+                                                             or not (proj / "assets" / sh["clip"]).exists()):
+                    used.append(n)
     cred_txt = ""
     if used:
-        cred_txt = "\n\n写真クレジット（iNaturalist）\n" + "\n".join(
+        cred_txt = "\n\n素材クレジット\n" + "\n".join(
             f"・{credits[n]['attribution']} {credits[n]['source']}" for n in used if n in credits)
     (out / "description.txt").write_text(script["title"] + "\n\n" + script.get("description", "") + cred_txt + "\n",
                                          encoding="utf-8")
@@ -636,7 +641,16 @@ def main(proj):
                 k = int(lt * FPS * shot.get("clip_speed", 1.0))
                 mid = frames[min(k, len(frames) - 1)].copy()
                 crop = (0, 0, img.size[0], img.size[1])
+                hit = shot.get("clip_hit")
+                if hit is not None:
+                    if hit <= lt < hit + 0.45:  # 当たった瞬間の揺れ
+                        amp = 22 * (1 - (lt - hit) / 0.45)
+                        mid = mid.transform(mid.size, Image.AFFINE,
+                                            (1, 0, amp * math.sin(lt * 90), 0, 1, amp * math.cos(lt * 70)))
+                    hc = shot.get("clip_hit_pos", [0.5, 0.6])
+                    mid = punch_fx(mid, lt, (MID_W * hc[0], MID_H * hc[1]), hit=hit, pre=False)
                 shot = {k2: v for k2, v in shot.items() if k2 not in ("circle", "punch")}
+                shot["_credit"] = clip
             else:
                 sp = dict(shot)
                 if shot.get("punch") and lt < 0.45:  # 急ズーム＋揺れ
@@ -664,8 +678,9 @@ def main(proj):
                 iw, ih = img.size
                 center = img_to_screen((cx * iw, cy * ih), crop)
                 scribble_circle(d, center, cr * MID_W, (lt - shot.get("circle_at", 0.35)) / 0.45, seed=len(it["text"]))
-            if shot["img"] in credits:
-                draw_credit(d, credit_short(credits[shot["img"]]))
+            ckey = shot.get("_credit", shot["img"])
+            if ckey in credits:
+                draw_credit(d, credit_short(credits[ckey]))
             lab = it["line"].get("label")
             if lab:
                 tilted_label(mid, lab["text"], COLORS[lab["color"]], lt, lab.get("angle", 4),

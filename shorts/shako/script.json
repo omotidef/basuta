@@ -43,7 +43,12 @@
             "punch": true,
             "clip": "punch.mp4",
             "clip_speed": 1.0,
-            "circle_at": 1.0
+            "circle_at": 1.0,
+            "clip_hit": 0.78,
+            "clip_hit_pos": [
+              0.6,
+              0.55
+            ]
           }
         },
         {
