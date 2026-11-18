@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+"""ショート動画ジェネレーター（basuta / ikimono フォーマット）
+
+使い方:
+    python3 tools/shorts/make_short.py shorts/shako
+
+フォルダ構成:
+    shorts/<name>/script.json   台本（テロップ・字幕・シーン）
+    shorts/<name>/voice/01.wav  VOICEVOX で書き出した音声（任意。字幕1行ごとに1ファイル）
+    shorts/<name>/out/          出力先（short.mp4, voicevox_import.txt, description.txt）
+
+voice/ に wav がなければ、読み上げ時間を推定した「音声なし」版を出力する。
+wav を入れて再実行すると、音声の長さに合わせて字幕を切り替えた完成版になる。
+"""
+import json
+import math
+import random
+import subprocess
+import sys
+import wave
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+W, H, FPS = 1080, 1920, 30
+TOP_H = 630
+MID_Y0, MID_Y1 = 633, 1285
+SUB_Y0 = 1300
+LOGO_Y = 1790
+
+YELLOW = (255, 255, 0)
+RED = (230, 0, 0)
+WHITE = (255, 255, 255)
+BLACK = (0, 0, 0)
+SUB_OUTLINE = (72, 176, 104)  # #48B068
+COLORS = {"yellow": YELLOW, "red": RED, "white": WHITE}
+
+FONT_HEAD = "/usr/share/fonts/opentype/mplus/Mplus1-Black.otf"
+FONT_SUB = "/usr/share/fonts/opentype/mplus/Mplus2-Bold.otf"
+FONT_LABEL = "/usr/share/fonts/opentype/mplus/Mplus1-Black.otf"
+
+SEC_PER_CHAR = 0.14   # 音声がないときの推定（ずんだもん話速1.1前後）
+LINE_PAD = 0.15       # 行と行の間の無音
+TAIL = 0.6            # 最後の余韻
+
+_font_cache = {}
+
+
+def font(path, size):
+    key = (path, size)
+    if key not in _font_cache:
+        _font_cache[key] = ImageFont.truetype(path, size)
+    return _font_cache[key]
+
+
+def text_w(draw, s, f, stroke=0):
+    l, t, r, b = draw.textbbox((0, 0), s, font=f, stroke_width=stroke)
+    return r - l
+
+
+# ---------- 文字組み ----------
+NO_HEAD = set("、。，．・」』）！？ーぁぃぅぇぉっゃゅょァィゥェォッャュョ")
+
+
+def wrap(draw, s, f, max_w, stroke):
+    lines, cur = [], ""
+    for ch in s:
+        if cur and text_w(draw, cur + ch, f, stroke) > max_w and ch not in NO_HEAD:
+            # 直近の句読点で切れるならそこで切る
+            cut = max(cur.rfind("、"), cur.rfind("。"))
+            if cut >= len(cur) - 7 and cut != len(cur) - 1 and cut > 0:
+                lines.append(cur[:cut + 1])
+                cur = cur[cut + 1:]
+            else:
+                lines.append(cur)
+                cur = ""
+        cur += ch
+    if cur:
+        lines.append(cur)
+    return lines
+
+
+def balanced_wrap(draw, s, f, max_w, stroke):
+    """行数は最小のまま、各行の長さをそろえる（「だ。」だけ残るのを防ぐ）"""
+    if "\n" in s:  # 台本で改行位置を指定した場合はそれに従う
+        return s.split("\n")
+    lines = wrap(draw, s, f, max_w, stroke)
+    n = len(lines)
+    if n == 1:
+        return lines
+    full = text_w(draw, s, f, stroke)
+    target = full / n
+    while target < max_w:
+        cand = wrap(draw, s, f, target * 1.06, stroke)
+        if len(cand) == n:
+            return cand
+        target += 20
+    return lines
+
+
+# ---------- 静的レイヤー ----------
+def build_base(script):
+    img = Image.new("RGB", (W, H), BLACK)
+    d = ImageDraw.Draw(img)
+    centers = [135, 315, 505]
+    for i, h in enumerate(script["headline"][:3]):
+        size = h.get("size", 180)
+        f = font(FONT_HEAD, size)
+        while text_w(d, h["text"], f) > 1010 and size > 60:
+            size -= 5
+            f = font(FONT_HEAD, size)
+        d.text((W // 2, centers[i]), h["text"], font=f, fill=COLORS[h["color"]], anchor="mm")
+    f = font(FONT_HEAD, 64)
+    d.text((W // 2, LOGO_Y), script.get("channel", ""), font=f, fill=YELLOW, anchor="mm",
+           stroke_width=6, stroke_fill=(200, 60, 0))
+    return img
+
+
+def build_mid_bg():
+    h = MID_Y1 - MID_Y0
+    bg = Image.new("RGB", (W, h))
+    d = ImageDraw.Draw(bg)
+    for y in range(h):
+        k = y / h
+        d.line([(0, y), (W, y)], fill=(int(10 + 20 * k), int(60 + 40 * k), int(110 + 50 * k)))
+    # 水面の光
+    for x in range(0, W, 140):
+        d.polygon([(x, 0), (x + 60, 0), (x + 160, h), (x + 120, h)], fill=(30, 95, 150))
+    return bg
+
+
+rng = random.Random(7)
+BUBBLES = [(rng.uniform(0, W), rng.uniform(0, 650), rng.uniform(6, 20), rng.uniform(30, 90)) for _ in range(26)]
+
+
+def draw_bubbles(d, t):
+    h = MID_Y1 - MID_Y0
+    for x, y, r, v in BUBBLES:
+        yy = (y - v * t) % (h + 40) - 20
+        xx = x + 10 * math.sin(t * 2 + y)
+        d.ellipse([xx - r, yy - r, xx + r, yy + r], outline=(170, 220, 255), width=3)
+
+
+def ease(p):
+    p = max(0.0, min(1.0, p))
+    return 1 - (1 - p) ** 3
+
+
+def outlined(d, xy, s, f, fill, stroke=8, sfill=BLACK, anchor="mm"):
+    d.text(xy, s, font=f, fill=fill, anchor=anchor, stroke_width=stroke, stroke_fill=sfill)
+
+
+# ---------- 中段のシーン（自作の図解アニメ） ----------
+def scene_hook(d, t, dur, sc, script):
+    cx, cy = W // 2, 360
+    p = ease(t / 0.35)
+    shake = 12 * math.sin(t * 60) * max(0, 1 - t / 0.6)
+    r1, r2 = 60 + 230 * p, 30 + 120 * p
+    pts = []
+    for i in range(32):
+        a = i * math.pi / 16 + 0.1
+        r = r1 if i % 2 == 0 else r2
+        pts.append((cx + shake + r * math.cos(a), cy + r * math.sin(a)))
+    d.polygon(pts, fill=(255, 210, 0), outline=(255, 90, 0), width=8)
+    outlined(d, (cx + shake, cy), "バチン！", font(FONT_LABEL, int(70 + 60 * p)), RED, 10, WHITE)
+    for i in range(14):
+        a = i * math.pi / 7
+        l0, l1 = r1 + 20, r1 + 20 + 80 * p
+        d.line([(cx + l0 * math.cos(a), cy + l0 * math.sin(a)), (cx + l1 * math.cos(a), cy + l1 * math.sin(a))],
+               fill=WHITE, width=6)
+
+
+def scene_speed(d, t, dur, sc, script):
+    p = ease(t / 1.2)
+    f = font(FONT_LABEL, 50)
+    rows = [("シャコのパンチ", 83, RED, "時速80km超"), ("一般道の車", 60, (190, 190, 190), "時速60km")]
+    x0, maxw = 60, 700
+    for i, (name, v, col, val) in enumerate(rows):
+        y = 230 + i * 190
+        outlined(d, (x0, y - 55), name, f, WHITE, 6, BLACK, "lm")
+        w = int(maxw * (v / 90) * p)
+        d.rounded_rectangle([x0, y, x0 + max(w, 10), y + 80], 16, fill=col, outline=WHITE, width=4)
+        if p > 0.6:
+            outlined(d, (x0 + w + 20, y + 40), val, font(FONT_LABEL, 44), WHITE, 6, BLACK, "lm")
+    # スピード線
+    for i in range(8):
+        y = 200 + i * 50
+        xs = (t * 1800 + i * 230) % (W + 300) - 300
+        d.line([(xs, y), (xs + 200, y)], fill=(220, 240, 255), width=3)
+    outlined(d, (W // 2, 600), "秒速 約23m", font(FONT_LABEL, 52), YELLOW, 7)
+
+
+def scene_force(d, t, dur, sc, script):
+    p = ease(t / 1.5)
+    # シャコの体重（小さい箱）
+    d.rounded_rectangle([90, 420, 210, 520], 12, fill=(255, 140, 60), outline=WHITE, width=4)
+    outlined(d, (150, 560), "体重", font(FONT_LABEL, 44), WHITE, 6)
+    # 力（大きくなる柱）
+    hmax = 280
+    hh = int(hmax * p)
+    d.rounded_rectangle([300, 520 - hh, 500, 520], 16, fill=RED, outline=WHITE, width=5)
+    outlined(d, (400, 560), "パンチの力", font(FONT_LABEL, 44), WHITE, 6)
+    if p > 0.5:
+        outlined(d, (400, 520 - hh - 40), "×数千倍", font(FONT_LABEL, 54), YELLOW, 8)
+    # 貝殻（後半で割れる）
+    cx, cy = 840, 400
+    broken = t > dur * 0.55
+    off = 40 * ease((t - dur * 0.55) / 0.4) if broken else 0
+    shell = [(cx - 130, cy + 60), (cx, cy - 110), (cx + 130, cy + 60)]
+    if not broken:
+        d.chord([cx - 140, cy - 120, cx + 140, cy + 140], 180, 360, fill=(240, 220, 190), outline=WHITE, width=5)
+        for k in range(-2, 3):
+            d.line([(cx + k * 45, cy + 10), (cx + k * 20, cy - 110)], fill=(190, 150, 110), width=4)
+    else:
+        d.chord([cx - 140 - off, cy - 120, cx + 140 - off, cy + 140], 180, 270, fill=(240, 220, 190), outline=WHITE, width=5)
+        d.chord([cx - 140 + off, cy - 120, cx + 140 + off, cy + 140], 270, 360, fill=(240, 220, 190), outline=WHITE, width=5)
+        outlined(d, (cx, cy + 150), "パキッ！", font(FONT_LABEL, 64), YELLOW, 8)
+    del shell
+
+
+def scene_bubble(d, t, dur, sc, script):
+    q = t / dur
+    tx, ty = 820, 380
+    # 獲物（貝）
+    d.ellipse([tx - 70, ty - 50, tx + 70, ty + 50], fill=(240, 220, 190), outline=WHITE, width=5)
+    # ハサミ（腕）
+    reach = ease(q / 0.25)
+    hx = 120 + (tx - 200 - 120) * reach
+    d.rounded_rectangle([60, ty - 25, hx, ty + 25], 12, fill=(255, 140, 60), outline=WHITE, width=4)
+    d.ellipse([hx - 40, ty - 55, hx + 60, ty + 55], fill=(255, 110, 40), outline=WHITE, width=5)
+    outlined(d, (360, 200), "1. ハサミが当たる", font(FONT_LABEL, 46), WHITE if q < 0.4 else (150, 150, 150), 6)
+    # 泡
+    if q > 0.3:
+        g = ease((q - 0.3) / 0.25)
+        collapse = ease((q - 0.62) / 0.12) if q > 0.62 else 0
+        r = 85 * g * (1 - collapse)
+        bx, by = hx + 115, ty
+        if r > 2:
+            d.ellipse([bx - r, by - r, bx + r, by + r], outline=(200, 240, 255), width=7)
+        outlined(d, (360, 280), "2. 泡ができる", font(FONT_LABEL, 46), WHITE if q < 0.65 else (150, 150, 150), 6)
+        if collapse > 0.5:
+            for i in range(12):
+                a = i * math.pi / 6
+                d.line([(bx + 20 * math.cos(a), by + 20 * math.sin(a)), (bx + 140 * math.cos(a), by + 140 * math.sin(a))],
+                       fill=YELLOW, width=7)
+            outlined(d, (W // 2, 560), "3. 泡がつぶれて2発目！", font(FONT_LABEL, 56), YELLOW, 8)
+
+
+def scene_glass(d, t, dur, sc, script):
+    x0, y0, x1, y1 = 160, 210, 920, 610
+    d.rectangle([x0, y0, x1, y1], outline=(200, 235, 255), width=10)
+    d.rectangle([x0 + 10, y0 + 120, x1 - 10, y1 - 10], fill=(40, 120, 180))
+    outlined(d, (x0 + 80, y0 + 50), "水槽", font(FONT_LABEL, 44), WHITE, 6)
+    p = ease((t - 0.4) / 1.2)
+    cx, cy = 600, 380
+    rr = random.Random(3)
+    for i in range(10):
+        a = i * math.pi / 5 + rr.uniform(-0.2, 0.2)
+        ln = rr.uniform(120, 260) * p
+        mx, my = cx + ln * 0.5 * math.cos(a + 0.15), cy + ln * 0.5 * math.sin(a + 0.15)
+        ex, ey = cx + ln * math.cos(a), cy + ln * math.sin(a)
+        d.line([(cx, cy), (mx, my), (ex, ey)], fill=WHITE, width=5)
+
+
+def scene_next(d, t, dur, sc, script):
+    p = ease(t / 0.5)
+    outlined(d, (int(W // 2 - 600 * (1 - p)), 230), "NEXT", font(FONT_LABEL, 130), YELLOW, 10)
+    outlined(d, (int(W // 2 + 600 * (1 - p)), 420), script.get("next_title", ""), font(FONT_LABEL, 120), WHITE, 10)
+
+
+SCENES = {"hook": scene_hook, "speed": scene_speed, "force": scene_force,
+          "bubble": scene_bubble, "glass": scene_glass, "next": scene_next}
+
+
+# ---------- タイミングと音声 ----------
+def build_timeline(script, voice_dir):
+    items, t, idx = [], 0.0, 0
+    have_voice = False
+    for si, sc in enumerate(script["scenes"]):
+        s_start = t
+        for ln in sc["lines"]:
+            idx += 1
+            wav = voice_dir / f"{idx:02d}.wav"
+            if wav.exists():
+                with wave.open(str(wav)) as w:
+                    dur = w.getnframes() / w.getframerate()
+                have_voice = True
+            else:
+                dur = SEC_PER_CHAR * len(ln["yomi"]) + 0.3
+                wav = None
+            items.append({"scene": si, "text": ln["text"], "start": t, "end": t + dur + LINE_PAD, "wav": wav})
+            t += dur + LINE_PAD
+        sc["_start"], sc["_end"] = s_start, t
+    return items, t + TAIL, have_voice
+
+
+def build_audio(items, total, out_wav):
+    params = None
+    for it in items:
+        if it["wav"]:
+            with wave.open(str(it["wav"])) as w:
+                params = w.getparams()
+            break
+    rate, ch, sw = params.framerate, params.nchannels, params.sampwidth
+    buf = bytearray(int(total * rate) * ch * sw)
+    for it in items:
+        if not it["wav"]:
+            continue
+        with wave.open(str(it["wav"])) as w:
+            if (w.getframerate(), w.getnchannels(), w.getsampwidth()) != (rate, ch, sw):
+                sys.exit(f"音声形式がそろっていません: {it['wav']}")
+            data = w.readframes(w.getnframes())
+        off = int(it["start"] * rate) * ch * sw
+        buf[off:off + len(data)] = data[:len(buf) - off]
+    with wave.open(str(out_wav), "wb") as w:
+        w.setnchannels(ch)
+        w.setsampwidth(sw)
+        w.setframerate(rate)
+        w.writeframes(bytes(buf))
+
+
+# ---------- メイン ----------
+def main(proj):
+    proj = Path(proj)
+    script = json.loads((proj / "script.json").read_text(encoding="utf-8"))
+    out = proj / "out"
+    out.mkdir(exist_ok=True)
+    items, total, have_voice = build_timeline(script, proj / "voice")
+
+    # VOICEVOX 用のテキスト（1行＝1音声。テキスト読み込みでそのまま使える）
+    yomi = [ln["yomi"] for sc in script["scenes"] for ln in sc["lines"]]
+    (out / "voicevox_import.txt").write_text("\n".join(yomi) + "\n", encoding="utf-8")
+    (out / "description.txt").write_text(script["title"] + "\n\n" + script.get("description", "") + "\n", encoding="utf-8")
+
+    base = build_base(script)
+    mid_bg = build_mid_bg()
+    tmp = Image.new("RGB", (10, 10))
+    md = ImageDraw.Draw(tmp)
+    fsub = font(FONT_SUB, 76)
+    sub_cache = {}
+
+    audio = None
+    if have_voice:
+        audio = out / "voice_track.wav"
+        build_audio(items, total, audio)
+
+    mp4 = out / "short.mp4"
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
+           "-r", str(FPS), "-i", "-"]
+    if audio:
+        cmd += ["-i", str(audio), "-c:a", "aac", "-b:a", "192k", "-shortest"]
+    cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+            "-movflags", "+faststart", str(mp4)]
+    ff = subprocess.Popen(cmd, stdin=subprocess.PIPE)
+
+    nframes = int(math.ceil(total * FPS))
+    cur = 0
+    for fi in range(nframes):
+        t = fi / FPS
+        while cur < len(items) - 1 and t >= items[cur]["end"]:
+            cur += 1
+        it = items[cur]
+        sc = script["scenes"][it["scene"]]
+        frame = base.copy()
+        mid = mid_bg.copy()
+        d = ImageDraw.Draw(mid)
+        st = t - sc["_start"]
+        draw_bubbles(d, t)
+        SCENES[sc["visual"]](d, st, sc["_end"] - sc["_start"], sc, script)
+        lab = sc.get("label")
+        if lab:
+            pop = 1 + 0.25 * max(0, 1 - st / 0.2)
+            outlined(d, (W // 2, 80), lab["text"], font(FONT_LABEL, int(100 * pop)), COLORS[lab["color"]], 9)
+        frame.paste(mid, (0, MID_Y0))
+        fd = ImageDraw.Draw(frame)
+        if it["text"] not in sub_cache:
+            lines = balanced_wrap(md, it["text"], fsub, 1000, 6)[:3]
+            size = 76
+            while size > 50 and max(text_w(md, ln, font(FONT_SUB, size), 6) for ln in lines) > 1020:
+                size -= 2
+            sub_cache[it["text"]] = (lines, font(FONT_SUB, size))
+        lines, fs = sub_cache[it["text"]]
+        for i, line in enumerate(lines):
+            fd.text((W // 2, SUB_Y0 + 45 + i * 110), line, font=fs, fill=WHITE, anchor="mm",
+                    stroke_width=6, stroke_fill=SUB_OUTLINE)
+        ff.stdin.write(frame.tobytes())
+    ff.stdin.close()
+    if ff.wait() != 0:
+        sys.exit("ffmpeg に失敗しました")
+
+    print(f"出力: {mp4}  長さ: {total:.1f}秒  音声: {'あり' if have_voice else 'なし（推定タイミング）'}")
+    print(f"VOICEVOX 用テキスト: {out / 'voicevox_import.txt'}（{len(yomi)}行）")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1] if len(sys.argv) > 1 else "shorts/shako")

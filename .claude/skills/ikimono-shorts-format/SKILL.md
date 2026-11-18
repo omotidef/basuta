@@ -67,6 +67,16 @@ description: 生き物（メイン）と雑学・科学（ときどき）の「�
 
 ※ かっこ内は台本の方向性。数値は 7. の手順で確認してから使うこと。
 
+## 9. 動画の生成（tools/shorts/make_short.py）
+1. `shorts/<ネタ名>/script.json` を作る（`shorts/shako/script.json` をコピーして書き換える）。
+   - `text`：画面に出す字幕。`\n` で改行位置を指定できる（1枚3行まで）。
+   - `yomi`：VOICEVOX に読ませる文（「23m」→「23メートル」のように読みを直す）。
+   - `visual`：中段の図解アニメ（hook / speed / force / bubble / glass / next）。新しいネタでは make_short.py にシーン関数を追加する。
+2. `python3 tools/shorts/make_short.py shorts/<ネタ名>` を実行する → `out/short.mp4`（この段階では音声なし）、`out/voicevox_import.txt`、`out/description.txt` が出る。
+3. VOICEVOX で `voicevox_import.txt` を「テキスト読み込み」し、ずんだもんを選んで（話速1.1前後）、**1行ずつ** `01.wav`, `02.wav`… と書き出し、`shorts/<ネタ名>/voice/` に入れる。
+4. もう一度実行すると、音声の長さに合わせて字幕が切り替わる音声入りの完成版になる。
+5. BGM や効果音を足すなら、完成した mp4 を編集ソフトに読み込んで重ねる（音源は商用利用できるものを使う）。
+
 ## 公開前のチェックリスト
 - [ ] タイトルが型どおりで、能力は1つに絞った
 - [ ] 冒頭3秒で「格付け＋断言」をしている
