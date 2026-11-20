@@ -318,5 +318,10 @@
     }
   ],
   "next_title": "テッポウエビ",
-  "description": "シャコ（モンハナシャコ）のパンチの速さと威力を解説。\n出典：Patek et al. (2004) Nature／Patek & Caldwell (2005) J. Exp. Biol.\nVOICEVOX:ずんだもん"
+  "description": "シャコ（モンハナシャコ）のパンチの速さと威力を解説。\n出典：Patek et al. (2004) Nature／Patek & Caldwell (2005) J. Exp. Biol.\nVOICEVOX:ずんだもん",
+  "bgm": {
+    "file": "../../tools/shorts/bgm/light_pop.m4a",
+    "volume": 0.5,
+    "volume_with_voice": 0.22
+  }
 }

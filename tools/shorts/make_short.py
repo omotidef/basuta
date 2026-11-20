@@ -615,9 +615,27 @@ def main(proj):
     mp4 = out / "short.mp4"
     cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
            "-r", str(FPS), "-i", "-"]
-    if audio:
-        cmd += ["-i", str(audio), "-c:a", "aac", "-b:a", "192k", "-shortest"]
-    cmd += ["-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
+    bgm = script.get("bgm")
+    bgm_path = (proj / bgm["file"]).resolve() if bgm else None
+    if bgm_path and not bgm_path.exists():
+        sys.exit(f"BGM が見つかりません: {bgm_path}")
+    fade = f"afade=t=out:st={max(0.0, total - 1.5):.2f}:d=1.5"
+    if audio and bgm_path:
+        # 声が鳴っている間だけ BGM を下げる（ダッキング）
+        vol = bgm.get("volume_with_voice", 0.22)
+        cmd += ["-i", str(audio), "-stream_loop", "-1", "-i", str(bgm_path), "-filter_complex",
+                f"[1:a]asplit=2[v1][v2];[2:a]atrim=0:{total:.2f},volume={vol},{fade}[b];"
+                f"[b][v1]sidechaincompress=threshold=0.02:ratio=8:attack=15:release=350[bd];"
+                f"[v2][bd]amix=inputs=2:duration=first:normalize=0[a]",
+                "-map", "0:v", "-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
+    elif audio:
+        cmd += ["-i", str(audio), "-map", "0:v", "-map", "1:a", "-c:a", "aac", "-b:a", "192k"]
+    elif bgm_path:
+        vol = bgm.get("volume", 0.5)
+        cmd += ["-stream_loop", "-1", "-i", str(bgm_path), "-filter_complex",
+                f"[1:a]atrim=0:{total:.2f},volume={vol},{fade}[a]",
+                "-map", "0:v", "-map", "[a]", "-c:a", "aac", "-b:a", "192k"]
+    cmd += ["-t", f"{total:.2f}", "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", str(mp4)]
     ff = subprocess.Popen(cmd, stdin=subprocess.PIPE)
 
@@ -712,7 +730,8 @@ def main(proj):
     if ff.wait() != 0:
         sys.exit("ffmpeg に失敗しました")
 
-    print(f"出力: {mp4}  長さ: {total:.1f}秒  音声: {'あり' if have_voice else 'なし（推定タイミング）'}")
+    print(f"出力: {mp4}  長さ: {total:.1f}秒  音声: {'あり' if have_voice else 'なし（推定タイミング）'}"
+          f"  BGM: {bgm['file'] if bgm else 'なし'}")
     print(f"VOICEVOX 用テキスト: {out / 'voicevox_import.txt'}（{len(yomi)}行）")
 
 
