@@ -111,8 +111,9 @@ def build_base(script):
             f = font(FONT_HEAD, size)
         d.text((W // 2, centers[i]), h["text"], font=f, fill=COLORS[h["color"]], anchor="mm")
     f = font(FONT_HEAD, 64)
-    d.text((W // 2, LOGO_Y), script.get("channel", ""), font=f, fill=YELLOW, anchor="mm",
-           stroke_width=6, stroke_fill=(200, 60, 0))
+    if script.get("channel"):
+        d.text((W // 2, LOGO_Y), script["channel"], font=f, fill=YELLOW, anchor="mm",
+               stroke_width=6, stroke_fill=(200, 60, 0))
     return img
 
 
